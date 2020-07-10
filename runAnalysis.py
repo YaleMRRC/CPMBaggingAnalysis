@@ -79,15 +79,9 @@ else:
 
 modelEdgesUnthresh = bsDict['posedges']/100
 
-
-#modeldct={ 'static' : '/data15/mri_group/dave_data/dcpm/staticBlockCV/staticcon_fIQ_400_400/results/dCPM_static_results_staticRelMotionRegress5iter.npy'}
-#modeldct={ 'static' : '/data15/mri_group/dave_data/dcpm/staticBlockCV/staticcon_fIQ_400_400/results/dCPM_static_results_test.npy'}
-#model_results_file=os.path.join(modeldct['static'])
-#modeltp=0
-#modelObj=np.load(model_results_file,allow_pickle=True)
 model = np.mean(np.concatenate([r for r in bsDict['posfits']]),axis=0)
 modelEdges=modelEdgesUnthresh > 0
-#modelEdgesUnthresh=modelObj[modeltp]['posedges']
+
 
 RHCPmodel1_gather=[]
 RHCPmodel400_gather=[]
