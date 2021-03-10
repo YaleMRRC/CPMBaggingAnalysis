@@ -11,20 +11,14 @@ import warnings
 import numpy as np
 import pandas as pd
 import random
-
+from collections import Counter
 
 from scipy import stats,io
 import scipy as sp
 
-
-#import cluster
-#import data_reduction
-#import plotting
-#import dfc
-#import utils
 import cpm
 from cpm import CPM
-
+from edgemontage import make_montage
 
 import matplotlib
 from matplotlib import pyplot as plt
@@ -37,12 +31,61 @@ from multiprocessing import Pool
 
 iterNum = str(sys.argv[1])
 
-globalOpdir = 'savepath/iter'+iterNum.zfill(2)
+globalOpdir = '/path/to/iter'+iterNum.zfill(2)
 
 if not os.path.isdir(globalOpdir):
     os.makedirs(globalOpdir)
 
 
+
+def randFamilySubs(subsToUse):
+    restrictData = pd.read_csv('/path/to/familyStruture')
+    restrictData = restrictData[restrictData.Subject.isin(subsToUse)]
+    cDict = Counter(restrictData.Family_ID.values)
+    cDict.keys()
+
+    numFamMembers = list(cDict.values())
+    famIDs = list(cDict.keys())
+
+    outerIdAgg = []
+
+    for outerI in range(0,2):
+        
+        numSum = 0
+        while numSum != 400:
+            numSum=0
+            numAgg = []
+            idAgg = []
+
+            while numSum < 400:
+                randint = random.choice(range(0,len(famIDs)))
+                num = numFamMembers[randint]
+                ids = famIDs[randint]
+                if ids not in idAgg:
+                    numAgg.append(num)
+                    idAgg.append(ids)
+                    numSum = numSum+num
+
+            #print(numSum)
+
+        outerIdAgg.append(idAgg)
+        keepInds = [famIDs.index(fI) for fI in famIDs if fI not in idAgg]
+
+        newFamIDs = [famIDs[kI] for kI in keepInds]
+        newNumFamMembers = [numFamMembers[kI] for kI in keepInds]
+
+        famIDs = newFamIDs
+        numFamMembers = newNumFamMembers
+
+    trainSubs = list(restrictData.Subject[restrictData.Family_ID.isin(outerIdAgg[0])].values)
+    testSubs = list(restrictData.Subject[restrictData.Family_ID.isin(outerIdAgg[1])].values)
+
+    trainSubs = list(map(lambda x: str(x),trainSubs))
+    testSubs = list(map(lambda x: str(x),testSubs))
+
+    assert len(set(trainSubs).intersection(set(testSubs))) == 0
+
+    return trainSubs, testSubs
 
 
 ############# TOC #######################
@@ -58,16 +101,16 @@ runSec2 = 1
 runSec3 = 1
 #### Section 4 ####
 #### Plot single model performance ####
-runSec4 = 1
+runSec4 = 0
 #### Section 5 ####
 #### Edge histograms ####
-runSec5 = 1
+runSec5 = 0
 #### Section 6 ####
 #### Multiple performance evaluation ####
 runSec6 = 1
 #### Section 7 ####
 #### Plots of multiple performance evaluation ####
-runSec7 = 1
+runSec7 = 0
 #### Section 8 ####
 #### Circle plots ####
 runSec8 = 0
@@ -76,13 +119,13 @@ runSec8 = 0
 runSec9 = 1
 #### Section 10 ####
 #### Plot thresholded resample models performance ####
-runSec10 = 1
-#### Section 9 ####
+runSec10 = 0
+#### Section 11 ####
 #### Evaluate thresholded resample models 2 ####
-runSec11 = 1
-#### Section 10 ####
+runSec11 = 0
+#### Section 12 ####
 #### Plot thresholded resample models performance 2 ####
-runSec12 = 1
+runSec12 = 0
 
 
 if runSec1 == 1:
@@ -91,57 +134,63 @@ if runSec1 == 1:
 
 
     ### Load HCP data
-    HCPCorrMats=np.load('path_to/HCP_WM_LR_corrmats.npy',allow_pickle=True).item()
-    subsToUse=np.load('path/to/substouse.npy')
-    HCPpmat=pd.read_csv('path_to/PMATs_inputtoCPM_oneline.csv',index_col=0) 
-    meanAbsMotParams=pd.read_csv('path_to/meanAbsMovementWMLRHCP_dcpminput.csv',index_col=0)
+    HCPCorrMats=np.load('/path/to/HCP_WM_LR_corrmats.npy',allow_pickle=True).item()
+    subsToUse=np.load('/path/to/substouse.npy')
+    HCPpmat=pd.read_csv('/path/to/PMATs_inputtoCPM_oneline.csv',index_col=0) 
+    meanAbsMotParams=pd.read_csv('/path/to/meanAbsMovementWMLRHCP_dcpminput.csv',index_col=0)
+
+    for hK in HCPCorrMats:
+        mat = HCPCorrMats[hK].astype('float32')
+        newMat = np.arctanh(mat)
+        newMat[newMat == np.inf] = np.arctanh(0.99999)
+        HCPCorrMats[hK] = newMat
 
 
     ### Select random subset of size 800 from total sample of ~860ish
-    randIndPath = os.path.join(globalOpdir,'Randinds.npy')
+    subsPath = os.path.join(globalOpdir,'subjectsplit.npy')
 
-    if not os.path.isfile(randIndPath):
+    if not os.path.isfile(subsPath):
 
-        randinds1=np.arange(0,len(subsToUse))
-        random.shuffle(randinds1)
+        trainSubs,testSubs = randFamilySubs(subsToUse)
 
         ## Save random indices and pick subject ids
-        np.save(randIndPath,randinds1)
+        np.save(subsPath,{'trainSubs':trainSubs,'testSubs':testSubs})
 
     else:
-        randinds1 = np.load(randIndPath, allow_pickle = True)
+        splitDict = np.load(subsPath, allow_pickle = True).item()
 
+        trainSubs = splitDict['trainSubs']
+        testSubs = splitDict['testSubs']
 
-    subsToUse=subsToUse[randinds1]
-    subsToUse = subsToUse[:800]
 
     ### Load PNC Data
     # PNC Data
-    PNCmatFile=io.loadmat('path_to/pncdata.mat') 
+    PNCmatFile=io.loadmat('/path/to/pncdata.mat') 
     PNCData=PNCmatFile['ipmats']
     PNCDataRes=np.reshape(PNCData,[268**2,788])
 
-    PNCpmatFile=io.loadmat('path_to/pncpmats.mat')  
+    PNCpmatFile=io.loadmat('/path/to/pncpmats.mat')  
     PNCpmat=np.squeeze(PNCpmatFile['pmats_pnc'])
 
 
     ### Define HCP Variables
 
-    HCPDataSample1 = np.stack([HCPCorrMats['sub'+sub] for sub in subsToUse[:400]])
-    HCPDataSample2 = np.stack([HCPCorrMats['sub'+sub] for sub in subsToUse[400:]])
+    HCPDataSample1 = np.stack([HCPCorrMats['sub'+sub] for sub in trainSubs])
+    HCPDataSample2 = np.stack([HCPCorrMats['sub'+sub] for sub in testSubs])
 
                                          
-    HCPabsmot = meanAbsMotParams[subsToUse].values.flatten()
-    HCPabsmotSample1= HCPabsmot[:400]
-    HCPabsmotSample2= HCPabsmot[400:]
+    #HCPabsmot = meanAbsMotParams[subsToUse].values.flatten()
+    HCPabsmotSample1 = meanAbsMotParams[trainSubs].values.flatten()
+    HCPabsmotSample2 = meanAbsMotParams[testSubs].values.flatten()
 
-    HCPpmat = HCPpmat[subsToUse].values.flatten()
-    HCPpmatSample1 = HCPpmat[:400]
-    HCPpmatSample2 = HCPpmat[400:]
+    #HCPpmat = HCPpmat[subsToUse].values.flatten()
+    HCPpmatSample1 = HCPpmat[trainSubs].values.flatten()
+    HCPpmatSample2 = HCPpmat[testSubs].values.flatten()
 
     # Reshape arrays
     HCPDataSample1=np.reshape(HCPDataSample1,[HCPDataSample1.shape[0],268**2])
     HCPDataSample2=np.reshape(HCPDataSample2,[HCPDataSample2.shape[0],268**2])
+
 
 
 
@@ -169,6 +218,7 @@ if runSec2 == 1:
         np.save(splitHalfPath,{'res':splitHalfRes})
     else:
         splitHalfRes = np.load(splitHalfPath, allow_pickle = True).item()
+        splitHalfRes = splitHalfRes['res']
 
     ## Five fold
     print('Five fold')
@@ -178,7 +228,7 @@ if runSec2 == 1:
         np.save(fiveFoldPath,{'res':fiveFoldRes})
     else:
         fiveFoldRes = np.load(fiveFoldPath, allow_pickle = True).item()
-
+        fiveFoldRes = fiveFoldRes['res']
     ## Ten fold
     print('Ten Fold')
     tenFoldPath = os.path.join(globalOpdir,'10kCV.npy')
@@ -187,6 +237,7 @@ if runSec2 == 1:
         np.save(tenFoldPath,{'res':tenFoldRes})
     else:
         tenFoldRes = np.load(tenFoldPath, allow_pickle = True).item()
+        tenFoldRes = tenFoldRes['res']
 
     ## LOO
     print('LOO')
@@ -196,6 +247,7 @@ if runSec2 == 1:
         np.save(looPath,{'res':looRes})
     else:
         looRes = np.load(looPath, allow_pickle = True).item()
+        looRes = looRes['res']
 
     ## Bootstrap
     print('Bootstrap')
@@ -271,36 +323,37 @@ if runSec3 == 1:
             print(i)
             edges = features[i,:]
             mod = models[i,:]
-            perf = cpm.apply_cpm(testX,testY,edges,mod,False,False,400)
+            perf = cpm.apply_cpm(testX,testY,edges,mod,False,False,len(testY))
             gather.append(perf)
 
         return np.array(gather)
 
 
     # SplitHalf
-    posEdgeMasktwoK = np.concatenate(splitHalfRes['res'][0])
-    posFitstwoK = np.concatenate(splitHalfRes['res'][5])
+
+    posEdgeMasktwoK = np.concatenate(splitHalfRes[0])
+    posFitstwoK = np.concatenate(splitHalfRes[5])
 
     gatherHCP2K = applyAllModels(posEdgeMasktwoK,posFitstwoK,HCPDataSample2,HCPpmatSample2)
     gatherPNC2K = applyAllModels(posEdgeMasktwoK,posFitstwoK,subIpmats,subPmats)
 
     # 5k
-    posEdgeMaskfiveK = np.concatenate(fiveFoldRes['res'][0])
-    posFitsfiveK = np.concatenate(fiveFoldRes['res'][5])
+    posEdgeMaskfiveK = np.concatenate(fiveFoldRes[0])
+    posFitsfiveK = np.concatenate(fiveFoldRes[5])
 
     gatherHCP5K = applyAllModels(posEdgeMaskfiveK,posFitsfiveK,HCPDataSample2,HCPpmatSample2)
     gatherPNC5K = applyAllModels(posEdgeMaskfiveK,posFitsfiveK,subIpmats,subPmats)
 
     #10K
-    posEdgeMasktenK = np.concatenate(tenFoldRes['res'][0])
-    posFitstenK = np.concatenate(tenFoldRes['res'][5])
+    posEdgeMasktenK = np.concatenate(tenFoldRes[0])
+    posFitstenK = np.concatenate(tenFoldRes[5])
 
     gatherHCP10K = applyAllModels(posEdgeMasktenK,posFitstenK,HCPDataSample2,HCPpmatSample2)
     gatherPNC10K = applyAllModels(posEdgeMasktenK,posFitstenK,subIpmats,subPmats)
 
     #loo
-    posEdgeMaskloo = np.concatenate(looRes['res'][0])
-    posFitsloo = np.concatenate(looRes['res'][5])
+    posEdgeMaskloo = np.concatenate(looRes[0])
+    posFitsloo = np.concatenate(looRes[5])
 
     gatherHCPLOO = applyAllModels(posEdgeMaskloo,posFitsloo,HCPDataSample2,HCPpmatSample2)
     gatherPNCLOO = applyAllModels(posEdgeMaskloo,posFitsloo,subIpmats,subPmats)
@@ -314,28 +367,31 @@ if runSec3 == 1:
 
     ## CV Performance evaluated across all folds
     # 2K
-    posBehavRes = np.reshape(splitHalfRes['res'][2],[100,400])
-    actBehavRes = np.reshape(splitHalfRes['res'][4],[100,400])
+    posBehavRes = np.reshape(splitHalfRes[2],[100,400])
+    actBehavRes = np.reshape(splitHalfRes[4],[100,400])
 
     cvPerf2K = np.array([np.corrcoef(posBehavRes[i,:],actBehavRes[i,:])[0,1] for i in range(0,50)])
 
     # 5K
-    posBehavRes = np.reshape(fiveFoldRes['res'][2],[100,400])
-    actBehavRes = np.reshape(fiveFoldRes['res'][4],[100,400])
+    posBehavRes = np.reshape(fiveFoldRes[2],[100,400])
+    actBehavRes = np.reshape(fiveFoldRes[4],[100,400])
 
     cvPerf5K = np.array([np.corrcoef(posBehavRes[i,:],actBehavRes[i,:])[0,1] for i in range(0,50)])
 
     # 10K
-    posBehavRes = np.reshape(tenFoldRes['res'][2],[100,400])
-    actBehavRes = np.reshape(tenFoldRes['res'][4],[100,400])
+    posBehavRes = np.reshape(tenFoldRes[2],[100,400])
+    actBehavRes = np.reshape(tenFoldRes[4],[100,400])
 
     cvPerf10K = np.array([np.corrcoef(posBehavRes[i,:],actBehavRes[i,:])[0,1] for i in range(0,50)])
 
     # LOO
-    posBehavRes = np.reshape(looRes['res'][2],[400])
-    actBehavRes = np.reshape(looRes['res'][4],[400])
+    posBehavRes = np.reshape(looRes[2],[400])
+    actBehavRes = np.reshape(looRes[4],[400])
 
     cvPerfloo = np.corrcoef(posBehavRes,actBehavRes)[0,1]
+
+
+
 if runSec5 == 1:
     #### Section 5 ####
     #### Edge Histograms ####
@@ -345,10 +401,10 @@ if runSec5 == 1:
     sub300edgesAv = np.array(sub300Res[1]).mean(axis=0)
     sub200edgesAv = np.array(sub200Res[1]).mean(axis=0)
 
-    posEdgeMasktwoKAv = np.concatenate(splitHalfRes['res'][0]).mean(axis=0)
-    posEdgeMaskfiveKAv = np.concatenate(fiveFoldRes['res'][0]).mean(axis=0)
-    posEdgeMasktenKAv = np.concatenate(tenFoldRes['res'][0]).mean(axis=0)
-    posEdgeMasklooAv = np.concatenate(looRes['res'][0]).mean(axis=0)
+    posEdgeMasktwoKAv = np.concatenate(splitHalfRes[0]).mean(axis=0)
+    posEdgeMaskfiveKAv = np.concatenate(fiveFoldRes[0]).mean(axis=0)
+    posEdgeMasktenKAv = np.concatenate(tenFoldRes[0]).mean(axis=0)
+    posEdgeMasklooAv = np.concatenate(looRes[0]).mean(axis=0)
 
 
     #plt.clf()
@@ -430,73 +486,110 @@ if runSec6 == 1:
 
         resDict = {}
 
-        for perfIter in range(0,100):
+        sampleSizes = [[200,200,100],[300,300,100],[400,400,1],[None,787,1]]
 
-            resDict[perfIter] = {}
+        for samSize in sampleSizes:
+            hcpSize,pncSize,iters = samSize
 
-            resampleIndsPNC = np.random.choice(range(0,787),size=200,replace=False)
-            subIpmatsPNC =PNCDataRes[:,resampleIndsPNC].T
-            subPmatsPNC = PNCpmat[resampleIndsPNC]
-
-
-            resampleIndsHCP = np.random.choice(range(0,400),size=200,replace=False)
-            subPmatsHCP = HCPpmatSample2[resampleIndsHCP]
-            subIpmatsHCP = HCPDataSample2[resampleIndsHCP,:]
+            if pncSize != None:
+                pncSizeLabel = 'pnc'+str(pncSize).zfill(3)
+                resDict[pncSizeLabel] = {}
 
 
-            ## Resampled Models
+                for perfIter in range(0,iters):
 
-            # HCP
+                    resDict[pncSizeLabel][perfIter] = {}
 
-            bootRHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,bootedges,bootmodel,False,False,400)
-            sub300RHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,sub300edges,sub300model,False,False,400)
-            sub200RHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,sub200edges,sub200model,False,False,400)
+                    resampleIndsPNC = np.random.choice(range(0,787),size=pncSize,replace=False)
+                    subIpmatsPNC =PNCDataRes[:,resampleIndsPNC].T
+                    subPmatsPNC = PNCpmat[resampleIndsPNC]
 
-            # PNC
+                    # PNC
 
-            bootRPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,bootedges,bootmodel,False,False,400)
-            sub300RPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,sub300edges,sub300model,False,False,400)
-            sub200RPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,sub200edges,sub200model,False,False,400)
-
-
-            # SplitHalf
-            gatherHCP2K = applyAllModels(posEdgeMasktwoK,posFitstwoK,subIpmatsHCP,subPmatsHCP)
-            gatherPNC2K = applyAllModels(posEdgeMasktwoK,posFitstwoK,subIpmatsPNC,subPmatsPNC)
-
-            # 5k
-            gatherHCP5K = applyAllModels(posEdgeMaskfiveK,posFitsfiveK,subIpmatsHCP,subPmatsHCP)
-            gatherPNC5K = applyAllModels(posEdgeMaskfiveK,posFitsfiveK,subIpmatsPNC,subPmatsPNC)
-
-            #10K
-            gatherHCP10K = applyAllModels(posEdgeMasktenK,posFitstenK,subIpmatsHCP,subPmatsHCP)
-            gatherPNC10K = applyAllModels(posEdgeMasktenK,posFitstenK,subIpmatsPNC,subPmatsPNC)
-
-            #loo
-            gatherHCPLOO = applyAllModels(posEdgeMaskloo,posFitsloo,subIpmatsHCP,subPmatsHCP)
-            gatherPNCLOO = applyAllModels(posEdgeMaskloo,posFitsloo,subIpmatsPNC,subPmatsPNC)
-
-            #train only
-            trainRHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,trainEdges,trainMod,False,False,400)
-            trainRPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,trainEdges,trainMod,False,False,400)
+                    bootRPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,bootedges,bootmodel,False,False,pncSize)
+                    sub300RPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,sub300edges,sub300model,False,False,pncSize)
+                    sub200RPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,sub200edges,sub200model,False,False,pncSize)
 
 
-            resDict[perfIter]['bootHCP'] = bootRHCP
-            resDict[perfIter]['sub300HCP'] = sub300RHCP
-            resDict[perfIter]['sub200HCP'] = sub200RHCP
-            resDict[perfIter]['HCP2K'] = gatherHCP2K
-            resDict[perfIter]['HCP5K'] = gatherHCP5K
-            resDict[perfIter]['HCP10K'] = gatherHCP10K
-            resDict[perfIter]['HCPLOO'] = gatherHCPLOO
-            resDict[perfIter]['HCPTrain'] = trainRHCP
+                    # SplitHalf
+                    gatherPNC2K = applyAllModels(posEdgeMasktwoK,posFitstwoK,subIpmatsPNC,subPmatsPNC)
 
-            resDict[perfIter]['bootPNC'] = bootRPNC
-            resDict[perfIter]['sub300PNC'] = sub300RPNC
-            resDict[perfIter]['sub200PNC'] = sub200RPNC
-            resDict[perfIter]['PNC2K'] = gatherPNC2K
-            resDict[perfIter]['PNC5K'] = gatherPNC5K
-            resDict[perfIter]['PNC10K'] = gatherPNC10K
-            resDict[perfIter]['PNCLOO'] = gatherPNCLOO
-            resDict[perfIter]['PNCTrain'] = trainRPNC
+                    # 5k
+                    gatherPNC5K = applyAllModels(posEdgeMaskfiveK,posFitsfiveK,subIpmatsPNC,subPmatsPNC)
+
+                    #10K
+                    gatherPNC10K = applyAllModels(posEdgeMasktenK,posFitstenK,subIpmatsPNC,subPmatsPNC)
+
+                    #loo
+                    gatherPNCLOO = applyAllModels(posEdgeMaskloo,posFitsloo,subIpmatsPNC,subPmatsPNC)
+
+                    #train only
+                    trainRPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,trainEdges,trainMod,False,False,pncSize)
+
+
+                    resDict[pncSizeLabel][perfIter]['bootPNC'] = bootRPNC
+                    resDict[pncSizeLabel][perfIter]['sub300PNC'] = sub300RPNC
+                    resDict[pncSizeLabel][perfIter]['sub200PNC'] = sub200RPNC
+                    resDict[pncSizeLabel][perfIter]['PNC2K'] = gatherPNC2K
+                    resDict[pncSizeLabel][perfIter]['PNC5K'] = gatherPNC5K
+                    resDict[pncSizeLabel][perfIter]['PNC10K'] = gatherPNC10K
+                    resDict[pncSizeLabel][perfIter]['PNCLOO'] = gatherPNCLOO
+                    resDict[pncSizeLabel][perfIter]['PNCTrain'] = trainRPNC
+
+
+
+
+            
+
+            if hcpSize != None:
+                hcpSizeLabel = 'hcp'+str(hcpSize).zfill(3)
+                resDict[hcpSizeLabel] = {}
+
+
+                for perfIter in range(0,iters):
+
+                    resDict[hcpSizeLabel][perfIter] = {}
+
+                    resampleIndsHCP = np.random.choice(range(0,400),size=hcpSize,replace=False)
+                    subPmatsHCP = HCPpmatSample2[resampleIndsHCP]
+                    subIpmatsHCP = HCPDataSample2[resampleIndsHCP,:]
+        
+
+                    ## Resampled Models
+
+                    # HCP
+
+                    bootRHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,bootedges,bootmodel,False,False,hcpSize)
+                    sub300RHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,sub300edges,sub300model,False,False,hcpSize)
+                    sub200RHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,sub200edges,sub200model,False,False,hcpSize)
+
+
+
+
+                    # SplitHalf
+                    gatherHCP2K = applyAllModels(posEdgeMasktwoK,posFitstwoK,subIpmatsHCP,subPmatsHCP)
+
+                    # 5k
+                    gatherHCP5K = applyAllModels(posEdgeMaskfiveK,posFitsfiveK,subIpmatsHCP,subPmatsHCP)
+
+                    #10K
+                    gatherHCP10K = applyAllModels(posEdgeMasktenK,posFitstenK,subIpmatsHCP,subPmatsHCP)
+
+                    #loo
+                    gatherHCPLOO = applyAllModels(posEdgeMaskloo,posFitsloo,subIpmatsHCP,subPmatsHCP)
+
+                    #train only
+                    trainRHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,trainEdges,trainMod,False,False,hcpSize)
+
+
+                    resDict[hcpSizeLabel][perfIter]['bootHCP'] = bootRHCP
+                    resDict[hcpSizeLabel][perfIter]['sub300HCP'] = sub300RHCP
+                    resDict[hcpSizeLabel][perfIter]['sub200HCP'] = sub200RHCP
+                    resDict[hcpSizeLabel][perfIter]['HCP2K'] = gatherHCP2K
+                    resDict[hcpSizeLabel][perfIter]['HCP5K'] = gatherHCP5K
+                    resDict[hcpSizeLabel][perfIter]['HCP10K'] = gatherHCP10K
+                    resDict[hcpSizeLabel][perfIter]['HCPLOO'] = gatherHCPLOO
+                    resDict[hcpSizeLabel][perfIter]['HCPTrain'] = trainRHCP
 
 
 
@@ -507,27 +600,6 @@ if runSec6 == 1:
 
 
 
-
-
-    diffPerfs = resDict[0].keys()
-
-    for resType in diffPerfs:
-        exec(resType+'Iter = np.stack([resDict[i]["'+resType+'"] for i in range(0,100)]).flatten()')
-
-
-
-
-
-
-#from scipy import stats
-#stats.ttest_ind(PNC10KIter, sub200PNCIter, equal_var=False)
-#stats.ttest_ind(sub200PNCIter,PNC10KIter, equal_var=False)
-#stats.ttest_ind(sub200PNCIter**2,PNC10KIter**2, equal_var=False)
-#stats.ttest_ind(bootstrapPNCIter**2,PNC10KIter**2, equal_var=False)
-#stats.ttest_ind(bootPNCIter**2,PNC10KIter**2, equal_var=False)
-#stats.ttest_ind(bootPNCIter**2,PNClooIter**2, equal_var=False)
-#stats.ttest_ind(bootPNCIter**2,PNCLooIter**2, equal_var=False)
-#stats.ttest_ind(bootPNCIter**2,PNCLOOIter**2, equal_var=False)
 
 
 
@@ -647,10 +719,10 @@ if runSec8 == 1:
     bootedgesAv = np.array(bootRes[1]).mean(axis=0)
     sub300edgesAv = np.array(sub300Res[1]).mean(axis=0)
     sub200edgesAv = np.array(sub200Res[1]).mean(axis=0)
-    posEdgeMasktwoKAv = np.concatenate(splitHalfRes['res'][0]).mean(axis=0)
-    posEdgeMaskfiveKAv = np.concatenate(fiveFoldRes['res'][0]).mean(axis=0)
-    posEdgeMasktenKAv = np.concatenate(tenFoldRes['res'][0]).mean(axis=0)
-    posEdgeMasklooAv = np.concatenate(looRes['res'][0]).mean(axis=0)
+    posEdgeMasktwoKAv = np.concatenate(splitHalfRes[0]).mean(axis=0)
+    posEdgeMaskfiveKAv = np.concatenate(fiveFoldRes[0]).mean(axis=0)
+    posEdgeMasktenKAv = np.concatenate(tenFoldRes[0]).mean(axis=0)
+    posEdgeMasklooAv = np.concatenate(looRes[0]).mean(axis=0)
 
 
     def do_thresh_montage(edges,thresh,opname):
@@ -682,111 +754,98 @@ if runSec9 == 1:
     sub300edgesAv = np.array(sub300Res[1]).mean(axis=0)
     sub200edgesAv = np.array(sub200Res[1]).mean(axis=0)
 
-    posEdgeMasktwoKAv = np.concatenate(splitHalfRes['res'][0]).mean(axis=0)
-    posEdgeMaskfiveKAv = np.concatenate(fiveFoldRes['res'][0]).mean(axis=0)
-    posEdgeMasktenKAv = np.concatenate(tenFoldRes['res'][0]).mean(axis=0)
-    posEdgeMasklooAv = np.concatenate(looRes['res'][0]).mean(axis=0)
-
-
     threshResOppath = os.path.join(globalOpdir,'threshRes.npy')
 
     if not os.path.isfile(threshResOppath):
 
+        threshs = list(map(lambda x : round (x,2), np.arange(0,1,0.1)))
+
         resDict = {}
 
 
-        resDict['bootHCP'] = {}
-        resDict['sub300HCP'] = {}
-        resDict['sub200HCP'] = {}
-        #resDict['HCP2K'] = {}
-        #resDict['HCP5K'] = {}
-        #resDict['HCP10K'] = {}
-        #resDict['HCPLOO'] = {}
-        #resDict['HCPTrain'] = {}
 
-
-        resDict['bootPNC'] = {}
-        resDict['sub300PNC'] = {}
-        resDict['sub200PNC'] = {}
+        sampleSizes = [[200,200,100],[300,300,100],[400,400,1],[None,787,1]]
 
 
 
+        for samSize in sampleSizes:
+            hcpSize,pncSize,iters = samSize
+
+            if pncSize != None:
+                pncSizeLabel = 'pnc'+str(pncSize).zfill(3)
+                resDict[pncSizeLabel] = {}
+
+                for perfIter in range(0,iters):
+
+                    resDict[pncSizeLabel][perfIter] = {}
+
+                    resampleIndsPNC = np.random.choice(range(0,787),size=pncSize,replace=False)
+                    subIpmatsPNC =PNCDataRes[:,resampleIndsPNC].T
+                    subPmatsPNC = PNCpmat[resampleIndsPNC]
+
+                    for thresh in threshs:
+                        ## Resampled Models
 
 
+                        resDict[pncSizeLabel][perfIter][thresh] = {}
 
-        threshs = list(map(lambda x : round (x,2), np.arange(0,1,0.1)))
-
-
-        for rk in resDict.keys():
-            for thresh in threshs:
-                resDict[rk][thresh] = []
-
-
-        for perfIter in range(0,100):
-            resampleIndsPNC = np.random.choice(range(0,787),size=200,replace=False)
-            subIpmatsPNC =PNCDataRes[:,resampleIndsPNC].T
-            subPmatsPNC = PNCpmat[resampleIndsPNC]
-
-
-            resampleIndsHCP = np.random.choice(range(0,400),size=200,replace=False)
-            subPmatsHCP = HCPpmatSample2[resampleIndsHCP]
-            subIpmatsHCP = HCPDataSample2[resampleIndsHCP,:]
-
-
-
-            for thresh in threshs:
-                ## Resampled Models
-
-                if thresh == 0:
-                    bootedgesThresh = bootedgesAv > thresh
-                    sub300edgesThresh = sub300edgesAv > thresh
-                    sub200edgesThresh = sub200edgesAv > thresh
-                else:
-                    bootedgesThresh = bootedgesAv >= thresh
-                    sub300edgesThresh = sub300edgesAv >= thresh
-                    sub200edgesThresh = sub200edgesAv >= thresh
+                        if thresh == 0:
+                            bootedgesThresh = bootedgesAv > thresh
+                            sub300edgesThresh = sub300edgesAv > thresh
+                            sub200edgesThresh = sub200edgesAv > thresh
+                        else:
+                            bootedgesThresh = bootedgesAv >= thresh
+                            sub300edgesThresh = sub300edgesAv >= thresh
+                            sub200edgesThresh = sub200edgesAv >= thresh
                 
-                # HCP
+                        # PNC
 
-                bootRHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,bootedgesThresh,bootmodel,False,False,200)
-                sub300RHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,sub300edgesThresh,sub300model,False,False,200)
-                sub200RHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,sub200edgesThresh,sub200model,False,False,200)
+                        bootRPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,bootedgesThresh,bootmodel,False,False,pncSize)
+                        sub300RPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,sub300edgesThresh,sub300model,False,False,pncSize)
+                        sub200RPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,sub200edgesThresh,sub200model,False,False,pncSize)
 
-                # PNC
-
-                bootRPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,bootedgesThresh,bootmodel,False,False,200)
-                sub300RPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,sub300edgesThresh,sub300model,False,False,200)
-                sub200RPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,sub200edgesThresh,sub200model,False,False,200)
+                        resDict[pncSizeLabel][perfIter][thresh]['bootPNC'] = bootRPNC
+                        resDict[pncSizeLabel][perfIter][thresh]['sub300PNC'] = sub300RPNC
+                        resDict[pncSizeLabel][perfIter][thresh]['sub200PNC'] = sub200RPNC
 
 
-                # SplitHalf
-                #gatherHCP2K = applyAllModels(posEdgeMasktwoK,posFitstwoK,subIpmatsHCP,subPmatsHCP)
-                #gatherPNC2K = applyAllModels(posEdgeMasktwoK,posFitstwoK,subIpmatsPNC,subPmatsPNC)
 
-                # 5k
-                #gatherHCP5K = applyAllModels(posEdgeMaskfiveK,posFitsfiveK,subIpmatsHCP,subPmatsHCP)
-                #gatherPNC5K = applyAllModels(posEdgeMaskfiveK,posFitsfiveK,subIpmatsPNC,subPmatsPNC)
+            if hcpSize != None:
+                hcpSizeLabel = 'hcp'+str(hcpSize).zfill(3)
+                resDict[hcpSizeLabel] = {}
 
-                #10K
-                #gatherHCP10K = applyAllModels(posEdgeMasktenK,posFitstenK,subIpmatsHCP,subPmatsHCP)
-                #gatherPNC10K = applyAllModels(posEdgeMasktenK,posFitstenK,subIpmatsPNC,subPmatsPNC)
+                for perfIter in range(0,iters):
 
-                #loo
-                #gatherHCPLOO = applyAllModels(posEdgeMaskloo,posFitsloo,subIpmatsHCP,subPmatsHCP)
-                #gatherPNCLOO = applyAllModels(posEdgeMaskloo,posFitsloo,subIpmatsPNC,subPmatsPNC)
+                    resDict[hcpSizeLabel][perfIter] = {}
 
-                #train only
-                #trainRHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,trainEdges,trainMod,False,False,400)
-                #trainRPNC = cpm.apply_cpm(subIpmatsPNC,subPmatsPNC,trainEdges,trainMod,False,False,400)
+                    resampleIndsHCP = np.random.choice(range(0,400),size=hcpSize,replace=False)
+                    subPmatsHCP = HCPpmatSample2[resampleIndsHCP]
+                    subIpmatsHCP = HCPDataSample2[resampleIndsHCP,:]
+
+                    for thresh in threshs:
+                        ## Resampled Models
 
 
-                resDict['bootHCP'][thresh].append(bootRHCP)
-                resDict['sub300HCP'][thresh].append(sub300RHCP)
-                resDict['sub200HCP'][thresh].append(sub200RHCP)
+                        resDict[hcpSizeLabel][perfIter][thresh] = {}
 
-                resDict['bootPNC'][thresh].append(bootRPNC)
-                resDict['sub300PNC'][thresh].append(sub300RPNC)
-                resDict['sub200PNC'][thresh].append(sub200RPNC)
+                        if thresh == 0:
+                            bootedgesThresh = bootedgesAv > thresh
+                            sub300edgesThresh = sub300edgesAv > thresh
+                            sub200edgesThresh = sub200edgesAv > thresh
+                        else:
+                            bootedgesThresh = bootedgesAv >= thresh
+                            sub300edgesThresh = sub300edgesAv >= thresh
+                            sub200edgesThresh = sub200edgesAv >= thresh
+                
+                        # HCP
+
+                        bootRHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,bootedgesThresh,bootmodel,False,False,hcpSize)
+                        sub300RHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,sub300edgesThresh,sub300model,False,False,hcpSize)
+                        sub200RHCP = cpm.apply_cpm(subIpmatsHCP,subPmatsHCP,sub200edgesThresh,sub200model,False,False,hcpSize)
+
+                        resDict[hcpSizeLabel][perfIter][thresh]['bootHCP'] = bootRHCP
+                        resDict[hcpSizeLabel][perfIter][thresh]['sub300HCP'] = sub300RHCP
+                        resDict[hcpSizeLabel][perfIter][thresh]['sub200HCP'] = sub200RHCP
 
 
         np.save(threshResOppath,resDict)
@@ -794,17 +853,6 @@ if runSec9 == 1:
     else:
         resDict = np.load(threshResOppath, allow_pickle = True).item()
 
-
-
-
-
-    bootHCP = np.stack([resDict['bootHCP'][k] for k in resDict['bootHCP'].keys()])
-    sub300HCP = np.stack([resDict['sub300HCP'][k] for k in resDict['sub300HCP'].keys()])
-    sub200HCP = np.stack([resDict['sub200HCP'][k] for k in resDict['sub200HCP'].keys()])
-
-    bootPNC = np.stack([resDict['bootPNC'][k] for k in resDict['bootPNC'].keys()])
-    sub300PNC = np.stack([resDict['sub300PNC'][k] for k in resDict['sub300PNC'].keys()])
-    sub200PNC = np.stack([resDict['sub200PNC'][k] for k in resDict['sub200PNC'].keys()])
 
 if runSec10 == 1:
 
@@ -923,10 +971,10 @@ if runSec11 == 1:
     sub300edgesAv = np.array(sub300Res[1]).mean(axis=0)
     sub200edgesAv = np.array(sub200Res[1]).mean(axis=0)
 
-    posEdgeMasktwoKAv = np.concatenate(splitHalfRes['res'][0]).mean(axis=0)
-    posEdgeMaskfiveKAv = np.concatenate(fiveFoldRes['res'][0]).mean(axis=0)
-    posEdgeMasktenKAv = np.concatenate(tenFoldRes['res'][0]).mean(axis=0)
-    posEdgeMasklooAv = np.concatenate(looRes['res'][0]).mean(axis=0)
+    posEdgeMasktwoKAv = np.concatenate(splitHalfRes[0]).mean(axis=0)
+    posEdgeMaskfiveKAv = np.concatenate(fiveFoldRes[0]).mean(axis=0)
+    posEdgeMasktenKAv = np.concatenate(tenFoldRes[0]).mean(axis=0)
+    posEdgeMasklooAv = np.concatenate(looRes[0]).mean(axis=0)
 
     threshRes2Oppath = os.path.join(globalOpdir,'threshRes.npy')
 
